@@ -36,7 +36,8 @@ void *get_in_addr(struct sockaddr *sa) {
 }
 
 int main(int argc, char *argv[]) {
-  int sockfd, numbytes;
+  int sockfd;
+  int numbytes = 1;
   char buf[MAXDATASIZE];
   struct addrinfo hints, *servinfo, *p;
   int rv;
@@ -90,7 +91,7 @@ int main(int argc, char *argv[]) {
 
     buf[numbytes] = '\0';
 
-    printf("Hint -> %s'\n", buf);
+    printf("Guess the word -> %s'\n", buf);
 
     char message[5] = "a\0";
     message[0] = getchar_clear();

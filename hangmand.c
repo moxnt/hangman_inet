@@ -12,11 +12,13 @@
 #include <unistd.h>
 
 #define MAX_LENGHT 50
-#define PORT "25565"
-#define PENDING 3 // Allowed pending connections
+#define PORT "2020" // My port now
+#define PENDING 5   // Allowed pending connections
+#define FILENAME "words.txt"
 #define TERMINATOR_LENGHT 1
 #define SUCCESS 0
 
+int bind_unix();
 unsigned int reveal(char character, char *word, unsigned int word_lenght);
 short unique_guess(char character, char *guesses);
 char getchar_clear();
@@ -36,11 +38,88 @@ void sigchld_handler(int s) {
 
 int main(int argc, char *argv[]) {
   // Socket stuff
-  struct addrinfo hints, *server_info, *p;
-  int socket_fd, new_fd;
-  socklen_t sin_size;
   struct sockaddr_storage their_addr;
+  socklen_t sin_size;
+  int new_fd, socket_fd;
   char s[INET6_ADDRSTRLEN];
+  // Game stuff
+  FILE *file_ptr;
+  char word_buffer[MAX_LENGHT];
+  char guess_buffer[MAX_LENGHT] = "\0";
+  char hint_buffer[MAX_LENGHT];
+  char recv_buffer[10];
+  char guess;
+  unsigned int current_word_lenght = 0; // includes null terminator \0
+  unsigned int revealed = 0;
+
+  file_ptr = fopen(FILENAME, "r");
+
+  if (NULL == file_ptr) {
+    fprintf(stderr, "Could not open file with name \"%s\".\n", FILENAME);
+    exit(1);
+  }
+
+  socket_fd = bind_unix();
+
+  while (fgets(word_buffer, MAX_LENGHT, file_ptr)) {
+
+    sin_size = sizeof their_addr;
+    new_fd = accept(socket_fd, (struct sockaddr *)&their_addr, &sin_size);
+
+    if (new_fd == -1) {
+      perror("accept");
+      continue;
+    }
+
+    inet_ntop(their_addr.ss_family, get_in_addr((struct sockaddr *)&their_addr),
+              s, sizeof s);
+    printf("server: got connection from %s\n", s);
+
+    if (!fork()) {      // this is the child process
+      close(socket_fd); // child doesn't need the listener
+      // MAIN STUFF
+      while (word_buffer[current_word_lenght] != '\0') {
+        current_word_lenght += 1;
+      }
+
+      init_hint(current_word_lenght, hint_buffer);
+
+      char message[current_word_lenght + 20];
+
+      while (revealed < (current_word_lenght - TERMINATOR_LENGHT)) {
+
+        printf("Guess the word: %s\n", hint_buffer);
+        sprintf(message, "Guess: %s\n", hint_buffer);
+        send(new_fd, message, current_word_lenght + 20, 0);
+        recv(new_fd, recv_buffer, 5, 0);
+        guess = recv_buffer[0];
+
+        if (unique_guess(guess, guess_buffer) == SUCCESS) {
+          revealed += reveal(guess, word_buffer, current_word_lenght);
+          update_hint(current_word_lenght, hint_buffer, word_buffer, guess);
+        }
+        printf("Letters :%d\n", revealed);
+      }
+      // MAIN STUFF
+      close(new_fd);
+      exit(0); // This guy terminates the child process
+    }
+    //
+    close(new_fd); // parent doesn't need this
+    //
+
+    current_word_lenght = 0;
+    guess_buffer[0] = '\0';
+    revealed = 0;
+  }
+
+  fclose(file_ptr);
+  return 0;
+}
+
+int bind_unix() {
+  struct addrinfo hints, *server_info, *p;
+  int socket_fd;
   int yes;
 
   memset(&hints, 0, sizeof hints);
@@ -50,7 +129,7 @@ int main(int argc, char *argv[]) {
 
   if (getaddrinfo(NULL, PORT, &hints, &server_info) != 0) {
     perror("Can't get address info");
-    return 1;
+    exit(1);
   }
 
   for (p = server_info; p != NULL; p = p->ai_next) {
@@ -96,80 +175,8 @@ int main(int argc, char *argv[]) {
     exit(1);
   }
 
-  // Game stuff
-  FILE *file_ptr;
-  char word_buffer[MAX_LENGHT];
-  char guess_buffer[MAX_LENGHT] = "\0";
-  char hint_buffer[MAX_LENGHT];
-  char recv_buffer[10];
-  char guess;
-  unsigned int current_word_lenght = 0; // includes null terminator \0
-  unsigned int revealed = 0;
-
-  file_ptr = fopen("words.txt", "r");
-
-  if (NULL == file_ptr) {
-    fprintf(stderr, "Could not open file.\n");
-    exit(1);
-  }
-
-  while (fgets(word_buffer, MAX_LENGHT, file_ptr)) {
-
-    sin_size = sizeof their_addr;
-    new_fd = accept(socket_fd, (struct sockaddr *)&their_addr, &sin_size);
-
-    if (new_fd == -1) {
-      perror("accept");
-      continue;
-    }
-
-    inet_ntop(their_addr.ss_family, get_in_addr((struct sockaddr *)&their_addr),
-              s, sizeof s);
-    printf("server: got connection from %s\n", s);
-
-    if (!fork()) {      // this is the child process
-      close(socket_fd); // child doesn't need the listener
-      // MAIN STUFF
-      while (word_buffer[current_word_lenght] != '\0') {
-        current_word_lenght += 1;
-      }
-
-      init_hint(current_word_lenght, hint_buffer);
-
-      char message[current_word_lenght + 20];
-
-      while (revealed < (current_word_lenght - TERMINATOR_LENGHT)) {
-
-        printf("Guess the word: %s\n", hint_buffer);
-        sprintf(message, "Guess: %s\n", hint_buffer);
-        send(new_fd, message, current_word_lenght + 20, 0);
-        recv(new_fd, recv_buffer, 5, 0);
-        guess = recv_buffer[0];
-
-        if (unique_guess(guess, guess_buffer) == SUCCESS) {
-          revealed += reveal(guess, word_buffer, current_word_lenght);
-          update_hint(current_word_lenght, hint_buffer, word_buffer, guess);
-        }
-        printf("Letters :%d\n", revealed);
-      }
-      // MAIN STUFF
-      close(new_fd);
-      exit(0);
-    }
-    //
-    close(new_fd); // parent doesn't need this
-    //
-
-    current_word_lenght = 0;
-    guess_buffer[0] = '\0';
-    revealed = 0;
-  }
-
-  fclose(file_ptr);
-  return 0;
+  return socket_fd;
 }
-
-void req_check() { return; }
 
 void *get_in_addr(struct sockaddr *sa) {
   if (sa->sa_family == AF_INET) {
