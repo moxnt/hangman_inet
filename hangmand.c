@@ -1,5 +1,8 @@
+/*
+** Hangman server that gets words from a file. port 2020
+*/
+
 #include <arpa/inet.h>
-#include <errno.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <signal.h>
@@ -25,16 +28,7 @@ char getchar_clear();
 void init_hint(unsigned int lenght, char *hint);
 void update_hint(unsigned int lenght, char *hint, char *word, char guess);
 void *get_in_addr(struct sockaddr *sa);
-
-// Dead process stuff, still need to figure it out
-void sigchld_handler(int s) {
-  int saved_errno = errno;
-
-  while (waitpid(-1, NULL, WNOHANG) > 0)
-    ;
-
-  errno = saved_errno;
-}
+void sigchld_handler(int s);
 
 int main(int argc, char *argv[]) {
   // Socket stuff
@@ -75,9 +69,10 @@ int main(int argc, char *argv[]) {
               s, sizeof s);
     printf("server: got connection from %s\n", s);
 
-    if (!fork()) {      // this is the child process
-      close(socket_fd); // child doesn't need the listener
+    if (!fork()) {
+      close(socket_fd);
       // MAIN STUFF
+      //
       while (word_buffer[current_word_lenght] != '\0') {
         current_word_lenght += 1;
       }
@@ -88,7 +83,7 @@ int main(int argc, char *argv[]) {
 
       while (revealed < (current_word_lenght - TERMINATOR_LENGHT)) {
 
-        printf("Guess the word: %s\n", hint_buffer);
+        printf("Current word: %s\n", hint_buffer);
         sprintf(message, "Guess: %s\n", hint_buffer);
         send(new_fd, message, current_word_lenght + 20, 0);
         recv(new_fd, recv_buffer, 5, 0);
@@ -105,7 +100,7 @@ int main(int argc, char *argv[]) {
       exit(0); // This guy terminates the child process
     }
     //
-    close(new_fd); // parent doesn't need this
+    close(new_fd);
     //
 
     current_word_lenght = 0;
@@ -115,6 +110,11 @@ int main(int argc, char *argv[]) {
 
   fclose(file_ptr);
   return 0;
+}
+
+void sigchld_handler(int s) {
+  while (waitpid(-1, NULL, WNOHANG) > 0) // Waits
+    ;
 }
 
 int bind_unix() {
@@ -135,19 +135,19 @@ int bind_unix() {
   for (p = server_info; p != NULL; p = p->ai_next) {
     if ((socket_fd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) ==
         -1) {
-      perror("server: socket");
+      perror("Call to socket failed");
       continue;
     }
 
     if (setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) ==
         -1) {
-      perror("setsockopt");
+      perror("Call to setsockopt failed");
       exit(1);
     }
 
     if (bind(socket_fd, p->ai_addr, p->ai_addrlen) == -1) {
       close(socket_fd);
-      perror("server: bind");
+      perror("Call to bind failed");
       continue;
     }
 
@@ -156,12 +156,12 @@ int bind_unix() {
   freeaddrinfo(server_info); // all done with this structure
 
   if (p == NULL) {
-    perror("server: socket");
+    perror("Could not bind to any of the adresses");
     exit(1);
   }
 
   if (listen(socket_fd, PENDING) == -1) {
-    perror("listen");
+    perror("Call to listen failed");
     exit(1);
   }
 
@@ -171,13 +171,14 @@ int bind_unix() {
   sigemptyset(&sa.sa_mask);
   sa.sa_flags = SA_RESTART;
   if (sigaction(SIGCHLD, &sa, NULL) == -1) {
-    perror("sigaction");
+    perror("Can't set handler for SIGCHLD");
     exit(1);
   }
 
   return socket_fd;
 }
 
+// cast to the proper ip version
 void *get_in_addr(struct sockaddr *sa) {
   if (sa->sa_family == AF_INET) {
     return &(((struct sockaddr_in *)sa)->sin_addr);
@@ -211,9 +212,6 @@ unsigned int reveal(char character, char *word, unsigned int word_lenght) {
   return revealed;
 }
 
-// TLDR: This function is unsafe.
-// There better be a terminating character not at the end of buffer or you get
-// UB, your fault. 0 - unique, 1 - not unique
 short unique_guess(char character, char *guesses) {
   int i;
   for (i = 0; guesses[i] != '\0'; i += 1) {
@@ -224,14 +222,4 @@ short unique_guess(char character, char *guesses) {
   guesses[i] = character;
   guesses[i + 1] = '\0';
   return 0;
-}
-
-char getchar_clear() {
-  int _, c;
-  printf("Guess -> ");
-  c = getchar();
-  printf("\n");
-  while ((_ = getchar()) != '\n' && _ != EOF) {
-  }
-  return c;
 }
